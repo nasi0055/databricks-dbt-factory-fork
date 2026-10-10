@@ -1,0 +1,68 @@
+import pytest
+from databricks_dbt_factory.dbt_factory import DbtFactory
+from databricks_dbt_factory.dbt_task import DbtTaskOptions, PowerBiRefreshOptions
+from databricks_dbt_factory.task_factory import (
+    ModelTaskFactory,
+    SnapshotTaskFactory,
+    SeedTaskFactory,
+    TestTaskFactory,
+    DbtDependencyResolver,
+)
+
+
+@pytest.fixture
+def dbt_factory():
+    return create_dbt_factory()
+
+
+@pytest.fixture
+def dbt_factory_with_deps():
+    return create_dbt_factory(dbt_deps_enabled=True)
+
+
+@pytest.fixture
+def dbt_factory_with_deps_selected():
+    return create_dbt_factory(
+        dbt_deps_enabled=True,
+        dbt_tasks_deps=["diamonds_prices", "second_dbt_model"],
+    )
+
+
+@pytest.fixture
+def notebook_factory():
+    return create_dbt_factory(task_type="notebook", notebook_path="./notebooks/dbt_runner.py")
+
+
+@pytest.fixture
+def dbt_factory_bundled():
+    return create_dbt_factory(bundle_tests=True)
+
+
+def create_dbt_factory(
+    dbt_deps_enabled: bool = False,
+    dbt_tasks_deps: list[str] | None = None,
+    task_type: str = "dbt",
+    notebook_path: str | None = None,
+    bundle_tests: bool = False,
+    dbt_options: str = "--target dev",
+    run_tests: bool = True,
+    powerbi_options: PowerBiRefreshOptions | None = None,
+) -> DbtFactory:
+    resolver = DbtDependencyResolver()
+    task_options = DbtTaskOptions(
+        source="GIT",
+        environment_key="Default",
+        dbt_deps_enabled=dbt_deps_enabled,
+        dbt_tasks_deps=dbt_tasks_deps,
+        task_type=task_type,
+        notebook_path=notebook_path,
+    )
+    task_factories = {
+        "model": ModelTaskFactory(resolver, task_options, dbt_options),
+        "snapshot": SnapshotTaskFactory(resolver, task_options, dbt_options),
+        "seed": SeedTaskFactory(resolver, task_options, dbt_options),
+    }
+    if run_tests:
+        task_factories["test"] = TestTaskFactory(resolver, task_options, dbt_options)
+
+    return DbtFactory(task_factories, bundle_tests=bundle_tests, powerbi_options=powerbi_options)
