@@ -2528,17 +2528,17 @@ class _NotebookValue:
 
 
 class _NotebookWidgets:
-    """The widget surface used by the packaged runner."""
+    """The widget surface used by the packaged runner; an unset widget reads as its declared default."""
 
     def __init__(self, values: dict[str, str]):
         self._values = values
+        self._defaults: dict[str, str] = {}
 
-    @staticmethod
-    def text(_name: str, _default: str) -> None:
-        return None
+    def text(self, name: str, default: str) -> None:
+        self._defaults[name] = default
 
     def get(self, name: str) -> str:
-        return self._values[name]
+        return self._values.get(name, self._defaults[name])
 
 
 def _notebook_dbutils(values: dict[str, str]):
