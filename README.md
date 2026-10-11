@@ -606,6 +606,34 @@ token's lifetime can fail mid-run with an authentication error. This is not a co
 runs — dbt pushes the SQL to the warehouse and mostly waits, so individual tasks rarely exceed an
 hour.
 
+#### Environment variables for dbt (`env_vars`)
+
+The runner sets `DBT_HOST` and `DBT_ACCESS_TOKEN` for `profiles.yml`. To pass anything else that
+`profiles.yml` or the project reads with `env_var()` — such as the SQL warehouse `http_path` per
+environment — set an `env_vars` job parameter to a JSON object of variable names to string values.
+Databricks pushes job parameters down to every notebook task, so one definition in the job template
+covers all generated tasks:
+
+```yaml
+resources:
+  jobs:
+    my_dbt_job:
+      parameters:
+        - name: env_vars
+          default: '{"DBT_HTTP_PATH": "/sql/1.0/warehouses/${var.warehouse_id}"}'
+```
+
+```yaml
+# profiles.yml
+http_path: "{{ env_var('DBT_HTTP_PATH') }}"
+```
+
+The runner sets the variables only while dbt runs and restores the previous values afterwards. It
+fails the task before running dbt when `env_vars` is not a JSON object of string values, has an
+invalid variable name, or names one of the variables the runner sets itself (`DBT_HOST`,
+`DBT_ACCESS_TOKEN`, `DBT_TARGET_PATH`, `DBT_LOG_PATH`). Values are visible in the job definition and
+run parameters, so never pass secrets this way; read them from a secret scope instead.
+
 #### Faster parsing on large projects (pre-built msgpack)
 
 On large projects with many parallel tasks, most of each task's time is dbt **parsing** (re-reading

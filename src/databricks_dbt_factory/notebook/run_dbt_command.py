@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shlex
 import shutil
 import tempfile
@@ -15,13 +16,38 @@ from dbt.cli.main import dbtRunner
 dbutils.widgets.text("dbt_commands", "")
 dbutils.widgets.text("project_directory", "")
 dbutils.widgets.text("profiles_directory", "")
+# Optional JSON object of environment variables to set while dbt runs, e.g. for `env_var()` in
+# profiles.yml. Usually supplied as a job parameter, which Databricks pushes down to every task.
+dbutils.widgets.text("env_vars", "")
 
 dbt_commands = dbutils.widgets.get("dbt_commands")
 project_directory = dbutils.widgets.get("project_directory")
 profiles_directory = dbutils.widgets.get("profiles_directory")
+env_vars_parameter = dbutils.widgets.get("env_vars")
 
 if not dbt_commands:
     raise ValueError("dbt_commands parameter is required")
+
+# The runner sets these itself; letting env_vars replace them would break authentication or the
+# per-task artifact isolation below.
+RUNNER_ENV_VARS = ("DBT_HOST", "DBT_ACCESS_TOKEN", "DBT_TARGET_PATH", "DBT_LOG_PATH")
+ENV_VAR_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+env_vars: dict[str, str] = {}
+if env_vars_parameter:
+    try:
+        env_vars = json.loads(env_vars_parameter)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"env_vars parameter is not valid JSON: {e}") from e
+    if not isinstance(env_vars, dict):
+        raise ValueError("env_vars parameter must be a JSON object of variable names to string values")
+    for _name, _value in env_vars.items():
+        if not ENV_VAR_NAME.fullmatch(_name):
+            raise ValueError(f"env_vars parameter has an invalid variable name: {_name!r}")
+        if not isinstance(_value, str):
+            raise ValueError(f"env_vars parameter value for {_name} must be a string")
+        if _name in RUNNER_ENV_VARS:
+            raise ValueError(f"env_vars parameter cannot set {_name}; the runner sets it")
 
 # COMMAND ----------
 
@@ -77,6 +103,10 @@ if os.path.exists(prebuilt_manifest_path):
         print(f"[dbt-factory] manifest injection unavailable, falling back to dbt parse: {e}")
         manifest = None
 
+# Set env_vars last, remembering any values they replace so the finally block can restore them.
+previous_env_vars = {name: os.environ.get(name) for name in env_vars}
+os.environ.update(env_vars)
+
 try:
     runner = dbtRunner(manifest=manifest)
 
@@ -108,6 +138,11 @@ finally:
     os.environ.pop("DBT_HOST", None)
     os.environ.pop("DBT_TARGET_PATH", None)
     os.environ.pop("DBT_LOG_PATH", None)
+    for name, previous in previous_env_vars.items():
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
     # Remove the private per-task target/log dir; on reused (all-purpose) clusters these
     # would otherwise accumulate under the system temp dir for the life of the cluster.
     if local_dir:
